@@ -8,52 +8,81 @@ import cv2
 
 
 #function to create missing pixels
-def create_missing_pixels(img, missing_rate=0.2):
+def create_missing_pixels(img, missing_rate):
     """Randomly remove a percentage of the image's pixels."""
     corrupted_img = img.copy()
     mask = np.random.rand(*img.shape) < missing_rate  # Create random mask
     corrupted_img[mask] = np.nan  # Set missing pixels to NaN
     return corrupted_img, mask
 
-def get_neighbors(img, i, j, window_size=1):
-    """Extract neighboring pixel values around (i, j) with NaN handling."""
+# def get_neighbors(img, i, j, window_size):
+#     """Extract neighboring pixel values around (i, j) with NaN handling."""
+#     neighbors = []
+#     rows, cols = img.shape
+#     for di in range(-window_size, window_size + 1):
+#         for dj in range(-window_size, window_size + 1):
+#             if di == 0 and dj == 0:
+#                 continue  # Skip the center pixel
+#             ni, nj = i + di, j + dj  # Neighbor coordinates
+#             if 0 <= ni < rows and 0 <= nj < cols:
+#                 value = img[ni, nj]
+#                 if np.isnan(value):
+#                     value = 0  # Replace missing neighbor with 0
+#                 neighbors.append(value)
+#             else:
+#                 neighbors.append(0)  # Border treated as 0
+#     return neighbors
+
+#New get neighbors function, old one was setting NaN's to 0 in the matrix which was skewing the calculation. New one uses average of pixels in the window to fill in NaN values
+#Smoother, better looking, WAY lower MSE
+def get_neighbors(img, i, j, window_size):
+    """Extract neighboring pixel values, replacing missing ones with the average of available neighbors."""
     neighbors = []
+    values_for_avg = []
+
     rows, cols = img.shape
     for di in range(-window_size, window_size + 1):
         for dj in range(-window_size, window_size + 1):
             if di == 0 and dj == 0:
-                continue  # Skip the center pixel
-            ni, nj = i + di, j + dj  # Neighbor coordinates
+                continue  # skip center
+            ni, nj = i + di, j + dj # Neighbor coordinates
             if 0 <= ni < rows and 0 <= nj < cols:
-                value = img[ni, nj]
-                if np.isnan(value):
-                    value = 0  # Replace missing neighbor with 0
-                neighbors.append(value)
+                val = img[ni, nj]
+                if not np.isnan(val):
+                    values_for_avg.append(val) #if pixel is not missing, append it to this variable to get the average of the neighbors
+                neighbors.append(val)
             else:
-                neighbors.append(0)  # Border treated as 0
+                neighbors.append(np.nan)  # out-of-bounds treated as missing
+
+    # Compute average of available neighbors
+    if values_for_avg:
+        avg_val = np.mean(values_for_avg) #compute the mean average for the neighboring pixels in the window
+    else:
+        avg_val = 0  # fallback if all are missing
+
+    # Replace NaNs with average
+    neighbors = [avg_val if np.isnan(v) else v for v in neighbors] #If there are NaN values in the window, replace them with the average of the neighbors to fine tune regression
     return neighbors
 
-def psnr(mse):
-    """Calculate Peak Signal to Noise Ratio from Mean Squared Error."""
-    return 10 * np.log10(1 / mse)
+
 
 # --- Load Real Image ---
 
 # Path to image
-img_path = 'C:/Users/JSale/LinearFinal/facec.jpg'  
+img_path = 'C:/Users/JSale/LinearFinal/Headshot.jpg'  
 img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)  #make image grayscale
 if img is None:
     raise ValueError("Image not found!")
 
 # Resize image to manageable size
-img = cv2.resize(img, (100, 100))  # 100x100 pixels
+#img = cv2.resize(img, (450, 450))  # 100x100 pixels
 
 # Normalize pixel values to range [0,1]
 original_img = img / 255.0
 
 #Create the missing pixels
 
-missing_rate = 0.2  # .x = percentage missing, .2-= 20%
+missing_rate = 0.6  # .x = percentage missing, .2-= 20%
 corrupted_img, missing_mask = create_missing_pixels(original_img, missing_rate) #create image with the pixels gone
 
 #Prep Training Data
@@ -62,7 +91,7 @@ X_train = []  # List for neighbor feature vectors
 y_train = []  # List for target center pixel values
 
 rows, cols = original_img.shape
-window_size = 2  # 5x5 neighbor window (excluding center)
+window_size = 5  # 5x5 neighbor window (excluding center)
 
 for i in range(window_size, rows - window_size):
     for j in range(window_size, cols - window_size):
@@ -79,8 +108,8 @@ y_train = np.array(y_train)
 
 # Train Rregression Modle
 
-model = Ridge(alpha=.10)  # Regularized linear regression β=(X^TX+αI)^−1 * X^Ty
-#model = LinearRegression() #Linear Regression β=(X^TX)^−1 * X^Ty
+#model = Ridge(alpha=.1)  # Regularized linear regression β=(X^TX+αI)^−1 * X^Ty
+model = LinearRegression() #Linear Regression β=(X^TX)^−1 * X^Ty
 # solving a system of linear equations to find the best weights for the neighbors
 model.fit(X_train, y_train)  # Fit model to training data
 
@@ -89,13 +118,23 @@ model.fit(X_train, y_train)  # Fit model to training data
 reconstructed_img = corrupted_img.copy()  # Start with corrupted image
 
 # Perform multiple passes to fill more missing pixels each time
-for pass_num in range(1):  # 10 prediction passes
-    for i in range(window_size, rows - window_size):
-        for j in range(window_size, cols - window_size):
-            if np.isnan(reconstructed_img[i, j]):  # Only predict missing pixels
-                neighbors = get_neighbors(reconstructed_img, i, j, window_size)
-                pred = model.predict(np.array(neighbors).reshape(1, -1))
-                reconstructed_img[i, j] = pred.item()  # Insert predicted value
+#for pass_num in range(1):  # 10 prediction passes
+#    for i in range(window_size, rows - window_size):
+#        for j in range(window_size, cols - window_size):
+#            if np.isnan(reconstructed_img[i, j]):  # Only predict missing pixels
+#                neighbors = get_neighbors(reconstructed_img, i, j, window_size)
+#                pred = model.predict(np.array(neighbors).reshape(1, -1))
+#                reconstructed_img[i, j] = pred.item()  # Insert predicted value
+#The old loop above was only predicting missing values, therefore would not re-go over the image once filled for 
+
+#Reconstuct the image!
+
+for i in range(rows):
+    for j in range(cols):
+        if missing_mask[i, j]:  # Only re-predict originally missing pixels
+            neighbors = get_neighbors(reconstructed_img, i, j, window_size)
+            pred = model.predict(np.array(neighbors).reshape(1, -1))
+            reconstructed_img[i, j] = pred.item()  # Update prediction each pass
 
 #Performance Evaluation
 
@@ -108,22 +147,33 @@ mse = mean_squared_error(
     reconstructed_img[missing_mask][valid_pixels]
 )
 
+def psnr(mse):
+    """Calculate Peak Signal to Noise Ratio from Mean Squared Error."""
+    return 10 * np.log10(1 / mse)
+
 # Calculate PSNR (Peak Signal to Noise Ratio)
 psnr_value = psnr(mse)
 
 print(f"MSE: {mse:.6f}")
 print(f"PSNR: {psnr_value:.2f} dB")
 
-#Create Plot of the Results
 
+#Get better contrast through normalization
+# Normalize to [0,1]
+min_val = np.nanmin(reconstructed_img)
+max_val = np.nanmax(reconstructed_img)
+reconstructed_img = (reconstructed_img - min_val) / (max_val - min_val)
+
+#Create Plot of the Results
 fig, axes = plt.subplots(1, 3, figsize=(15, 5))
 
 axes[0].imshow(original_img, cmap='gray')
 axes[0].set_title('Original Image')
 axes[0].axis('off')
 
+percent_missing= missing_rate*100
 axes[1].imshow(np.where(missing_mask, 1, corrupted_img), cmap='gray')
-axes[1].set_title('Corrupted Image (Missing 20%)')
+axes[1].set_title(f'Corrupted Image (Missing {percent_missing: .0f}%)')
 axes[1].axis('off')
 
 axes[2].imshow(reconstructed_img, cmap='gray')
@@ -131,7 +181,7 @@ axes[2].set_title('Reconstructed Image (Regression)')
 axes[2].axis('off')
 
 # Overall title showing performance
-#plt.suptitle(f"MSE: {mse:.6f} | PSNR: {psnr_value:.2f} dB", fontsize=16)
+plt.suptitle(f"MSE: {mse:.6f} | PSNR: {psnr_value:.2f} dB", fontsize=16)
 plt.tight_layout()
 plt.show()
 #pseudoinverse 
