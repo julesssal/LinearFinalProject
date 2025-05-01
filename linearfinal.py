@@ -69,20 +69,20 @@ def get_neighbors(img, i, j, window_size):
 # --- Load Real Image ---
 
 # Path to image
-img_path = 'C:/Users/JSale/LinearFinal/Headshot.jpg'  
+img_path = 'C:/Users/JSale/LinearFinal/kitty.jpg'  
 img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)  #make image grayscale
 if img is None:
     raise ValueError("Image not found!")
 
 # Resize image to manageable size
-#img = cv2.resize(img, (450, 450))  # 100x100 pixels
+#img = cv2.resize(img, (500, 500))  # 100x100 pixels
 
 # Normalize pixel values to range [0,1]
 original_img = img / 255.0
 
 #Create the missing pixels
 
-missing_rate = 0.6  # .x = percentage missing, .2-= 20%
+missing_rate = 0.9  # .x = percentage missing, .2-= 20%
 corrupted_img, missing_mask = create_missing_pixels(original_img, missing_rate) #create image with the pixels gone
 
 #Prep Training Data
@@ -108,8 +108,8 @@ y_train = np.array(y_train)
 
 # Train Rregression Modle
 
-#model = Ridge(alpha=.1)  # Regularized linear regression β=(X^TX+αI)^−1 * X^Ty
-model = LinearRegression() #Linear Regression β=(X^TX)^−1 * X^Ty
+model = Ridge(alpha=200)  # Regularized linear regression β=(X^TX+αI)^−1 * X^Ty
+#model = LinearRegression() #Linear Regression β=(X^TX)^−1 * X^Ty
 # solving a system of linear equations to find the best weights for the neighbors
 model.fit(X_train, y_train)  # Fit model to training data
 
@@ -172,6 +172,8 @@ axes[0].set_title('Original Image')
 axes[0].axis('off')
 
 percent_missing= missing_rate*100
+corrupted_display = np.where(missing_mask, 0.5, corrupted_img)
+plt.imshow(corrupted_display, cmap='gray')
 axes[1].imshow(np.where(missing_mask, 1, corrupted_img), cmap='gray')
 axes[1].set_title(f'Corrupted Image (Missing {percent_missing: .0f}%)')
 axes[1].axis('off')
